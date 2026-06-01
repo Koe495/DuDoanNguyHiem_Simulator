@@ -137,16 +137,31 @@ class SimulationData:
         self.body_temp = np.clip(self.body_temp + random.uniform(-0.01, 0.01), 30.0, 42.0)
 
     def get_features_for_ai(self):
-        hr_std = np.std(self.hr_history) if len(self.hr_history) > 1 else 0
-        return pd.DataFrame([[
-            self.hr, self.hr - self.base_hr, hr_std, self.hrv, self.body_temp,
-            self.env_temp, self.humidity, self.pressure, self.oxygen,
-            self.uv, self.aqi, self.accel, self.fall_duration
-        ]], columns=[
-            'hr', 'hr_diff_from_baseline', 'hr_rolling_std', 'hrv', 'body_temp',
-            'env_temp', 'humidity', 'pressure', 'oxygen', 'uv_index', 'aqi',
-            'accel_mag', 'fall_duration'
-        ])
+        # Khởi tạo giá trị mặc định khi chưa tích lũy đủ lịch sử hàng đợi
+        hr_list = list(self.hr_history) if len(self.hr_history) > 0 else [self.hr]
+
+        # Tính toán đặc trưng miền thời gian (Time-domain features)
+        hr_baseline = 75.0  # Giả định nhịp tim tĩnh cơ bản của nhân vật khi bắt đầu game
+        hr_diff = self.hr - hr_baseline
+        hr_std = np.std(hr_list) if len(hr_list) > 1 else 0.0
+
+        # Gom cụm các đặc trưng đầu vào để nạp vào mô hình Random Forest
+        features = pd.DataFrame([{
+            'hr': self.hr,
+            'hr_diff_from_baseline': hr_diff,
+            'hr_rolling_std': hr_std,
+            'hrv': self.hrv,
+            'body_temp': self.body_temp,
+            'env_temp': self.env_temp,
+            'humidity': self.humidity,
+            'pressure': self.pressure,
+            'oxygen': self.oxygen,
+            'uv_index': self.uv,
+            'aqi': self.aqi,
+            'accel_mag': self.accel,
+            'fall_duration': self.fall_duration
+        }])
+        return features
 
     # --- ĐÃ SỬA: ÁP DỤNG HỌC MÁY THUẦN TÚY 100% ---
     def predict_danger(self):

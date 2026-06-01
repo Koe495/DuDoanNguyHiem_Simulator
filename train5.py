@@ -18,15 +18,17 @@ except FileNotFoundError:
     exit()
 
 # Tạo các đặc trưng phái sinh (Feature Engineering) để khớp với game
-# Nhịp tim cơ bản trung bình giả định là 75 bpm
-df['hr_diff_from_baseline'] = df['hr'] - 75.0
+df = df.sort_values(by=['user_id', 'timestamp'])
 
-# Tính độ lệch chuẩn nhịp tim (Rolling Standard Deviation) theo từng user để đo lường biến thiên
-# Việc nhóm theo user_id rất quan trọng vì chuỗi thời gian của mỗi người là độc lập
+# Tính nhịp tim nền tảng động dựa trên trung bình thực tế của từng user
+df['hr_baseline'] = df.groupby('user_id')['hr'].transform('mean')
+df['hr_diff_from_baseline'] = df['hr'] - df['hr_baseline']
+
+# Tính độ lệch chuẩn nhịp tim trượt (Rolling Standard Deviation) với cửa sổ window=12 đồng bộ
 df['hr_rolling_std'] = df.groupby('user_id')['hr'].transform(
-    lambda x: x.rolling(window=5, min_periods=1).std().fillna(0)
+    lambda x: x.rolling(window=12, min_periods=1).std()
 )
-
+df['hr_rolling_std'] = df['hr_rolling_std'].fillna(0)
 # ==========================================
 # 2. CHUẨN BỊ FEATURES (X) VÀ TARGET (y)
 # ==========================================
