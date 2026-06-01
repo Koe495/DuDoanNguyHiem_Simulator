@@ -140,8 +140,8 @@ def evaluate_loaded_model(X, y, features, model_path='rf_model.pkl'):
 
 
 if __name__ == "__main__":
-    filepath = 'simulation_survival_dataset4.csv'
-    modelpath = 'rf_model.pkl'
+    filepath = 'simulation_survival_dataset5.csv'
+    modelpath = 'rf_model_v5.pkl'
 
     try:
         X, y, features = load_and_preprocess_data(filepath)

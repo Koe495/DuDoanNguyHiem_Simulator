@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mô Phỏng Decision Tree & Random Forest</title>
+    <!-- Sử dụng Tailwind CSS qua CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas {
+            image-rendering: -moz-crisp-edges;
+            image-rendering: -webkit-optimize-contrast;
+            image-rendering: crisp-edges;
+            image-rendering: pixelated;
+        }
+        /* Custom scrollbar for control panel */
+        .controls-scroll::-webkit-scrollbar { width: 6px; }
+        .controls-scroll::-webkit-scrollbar-track { background: #f1f1f1; }
+        .controls-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+    </style>
+</head>
+<body class="bg-slate-100 h-screen w-screen overflow-hidden flex text-slate-800">
+
+    <!-- Cột điều khiển (Sidebar) -->
+    <div class="w-80 bg-white shadow-xl z-10 flex flex-col h-full border-r border-slate-200 controls-scroll overflow-y-auto">
+        <div class="p-6 bg-blue-600 text-white">
+            <h1 class="text-2xl font-bold mb-2"><i class="fas fa-project-diagram mr-2"></i>DT & RF</h1>
+            <p class="text-sm opacity-90">Học máy tương tác trực quan</p>
+        </div>
+
+        <div class="p-6 flex-1 flex flex-col gap-6">
+            
+            <!-- Section: Sinh dữ liệu -->
+            <div class="space-y-3">
+                <h2 class="text-lg font-semibold border-b pb-2"><i class="fas fa-database mr-2 text-blue-500"></i>1. Dữ liệu</h2>
+                <div class="grid grid-cols-2 gap-2">
+                    <button onclick="generateData('xor')" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-sm rounded transition border border-slate-300">Xéo (XOR)</button>
+                    <button onclick="generateData('donut')" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-sm rounded transition border border-slate-300">Vòng tròn</button>
+                    <button onclick="generateData('moons')" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-sm rounded transition border border-slate-300">Hai bán nguyệt</button>
+                    <button onclick="generateData('random')" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-sm rounded transition border border-slate-300">Ngẫu nhiên</button>
+                </div>
+                <div class="flex items-center justify-between text-sm mt-2">
+                    <span>Độ nhiễu:</span>
+                    <input type="range" id="noiseLevel" min="10" max="80" value="30" class="w-32" onchange="generateData(currentDataType)">
+                </div>
+            </div>
+
+            <!-- Tabs: Chuyển đổi mô hình -->
+            <div class="flex border-b border-slate-200">
+                <button id="tab-dt" onclick="switchTab('dt')" class="flex-1 py-2 text-sm font-medium border-b-2 border-blue-600 text-blue-600 transition">Decision Tree</button>
+                <button id="tab-rf" onclick="switchTab('rf')" class="flex-1 py-2 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-slate-700 transition">Random Forest</button>
+            </div>
+
+            <!-- Section: Decision Tree -->
+            <div id="panel-dt" class="space-y-4">
+                <div class="bg-blue-50 p-3 rounded text-sm text-blue-800">
+                    <strong>Decision Tree</strong> chia không gian dữ liệu bằng các đường cắt ngang/dọc liên tiếp.
+                </div>
+                <div>
+                    <div class="flex justify-between text-sm font-medium mb-1">
+                        <span>Độ sâu tối đa (Max Depth):</span>
+                        <span id="depthVal" class="text-blue-600 font-bold">3</span>
+                    </div>
+                    <input type="range" id="maxDepth" min="1" max="15" value="3" class="w-full accent-blue-600" oninput="updateUI(); trainModel();">
+                    <p class="text-xs text-slate-500 mt-1">Độ sâu càng lớn, cây phân chia càng chi tiết (có thể gây Overfitting).</p>
+                </div>
+            </div>
+
+            <!-- Section: Random Forest -->
+            <div id="panel-rf" class="space-y-4 hidden">
+                <div class="bg-green-50 p-3 rounded text-sm text-green-800">
+                    <strong>Random Forest</strong> tạo ra nhiều Cây quyết định ngẫu nhiên và lấy "biểu quyết" để cho ra kết quả mịn hơn, tránh học vẹt.
+                </div>
+                <div>
+                    <div class="flex justify-between text-sm font-medium mb-1">
+                        <span>Số lượng cây (N Trees):</span>
+                        <span id="nTreesVal" class="text-green-600 font-bold">10</span>
+                    </div>
+                    <input type="range" id="nTrees" min="1" max="50" value="10" class="w-full accent-green-600" oninput="updateUI(); trainModel();">
+                </div>
+                <div>
+                    <div class="flex justify-between text-sm font-medium mb-1">
+                        <span>Độ sâu mỗi cây (Max Depth):</span>
+                        <span id="rfDepthVal" class="text-green-600 font-bold">5</span>
+                    </div>
+                    <input type="range" id="rfDepth" min="1" max="15" value="5" class="w-full accent-green-600" oninput="updateUI(); trainModel();">
+                </div>
+            </div>
+
+            <div class="mt-auto">
+                <button id="trainBtn" onclick="forceRetrain()" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded shadow transition flex justify-center items-center">
+                    <i class="fas fa-play mr-2"></i> Huấn luyện lại
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Khu vực hiển thị trung tâm -->
+    <div class="flex-1 relative flex items-center justify-center bg-slate-100 p-8">
+        
+        <!-- Trạng thái Loading -->
+        <div id="loading" class="absolute inset-0 bg-white/80 z-20 flex flex-col items-center justify-center hidden backdrop-blur-sm">
+            <i class="fas fa-circle-notch fa-spin text-4xl text-blue-600 mb-4"></i>
+            <h3 class="text-xl font-bold text-slate-700">Đang tính toán ranh giới...</h3>
+            <p class="text-slate-500">Xin vui lòng chờ (Random Forest có thể mất chút thời gian)</p>
+        </div>
+
+        <div class="bg-white p-4 rounded-xl shadow-lg border border-slate-200">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-bold text-slate-700" id="canvasTitle">Ranh giới phân loại của Decision Tree</h3>
+                <div class="flex items-center gap-4 text-sm">
+                    <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-red-500 inline-block"></span> Lớp 0</span>
+                    <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-blue-500 inline-block"></span> Lớp 1</span>
+                </div>
+            </div>
+            
+            <!-- Canvas để vẽ dữ liệu và decision boundary -->
+            <canvas id="vizCanvas" width="500" height="500" class="border border-slate-200 rounded cursor-crosshair"></canvas>
+            
+            <p class="text-center text-sm text-slate-500 mt-4">
+                Vùng màu <span class="text-red-400 font-bold">hồng</span> và <span class="text-blue-400 font-bold">xanh nhạt</span> là kết quả dự đoán của mô hình.
+            </p>
+        </div>
+    </div>
+
+    <!-- Logic Học Máy bằng JavaScript thuần -->
+    <script>
+        // --- 1. THUẬT TOÁN DECISION TREE (CART) ---
+        class Node {
+            constructor(feature, threshold, left, right, label = null) {
+                this.feature = feature;     // 'x' hoặc 'y'
+                this.threshold = threshold; // Ngưỡng cắt
+                this.left = left;           // Nhánh trái
+                this.right = right;         // Nhánh phải
+                this.label = label;         // Nhãn nếu là node lá
+            }
+        }
+
+        class DecisionTree {
+            constructor(maxDepth = 3) {
+                this.maxDepth = maxDepth;
+                this.root = null;
+            }
+
+            // Tính độ tinh khiết Gini Impurity
+            calculateGini(data) {
+                if (data.length === 0) return 0;
+                let c0 = 0;
+                for (let i = 0; i < data.length; i++) if (data[i].label === 0) c0++;
+                const p0 = c0 / data.length;
+                const p1 = 1 - p0;
+                return 1 - (p0 * p0 + p1 * p1);
+            }
+
+            // Tìm điểm chia (split) tốt nhất để giảm Gini nhiều nhất
+            findBestSplit(data) {
+                let bestGini = Infinity;
+                let bestSplit = null;
+                const features = ['x', 'y'];
+
+                features.forEach(feature => {
+                    // Sắp xếp dữ liệu theo feature để tìm điểm chia
+                    const sortedData = [...data].sort((a, b) => a[feature] - b[feature]);
+                    
+                    for (let i = 1; i < sortedData.length; i++) {
+                        // Lấy ngưỡng là trung bình giữa 2 điểm liên tiếp
+                        const threshold = (sortedData[i - 1][feature] + sortedData[i][feature]) / 2;
+                        
+                        // Nếu 2 điểm giống hệt nhau, bỏ qua
+                        if (sortedData[i-1][feature] === sortedData[i][feature]) continue;
+
+                        const left = sortedData.slice(0, i);
+                        const right = sortedData.slice(i);
+
+                        const giniLeft = this.calculateGini(left);
+                        const giniRight = this.calculateGini(right);
+                        
+                        // Trọng số Gini
+                        const weightedGini = (left.length * giniLeft + right.length * giniRight) / data.length;
+
+                        if (weightedGini < bestGini) {
+                            bestGini = weightedGini;
+                            bestSplit = { feature, threshold, left, right };
+                        }
+                    }
+                });
+
+                return bestSplit;
+            }
+
+            // Hàm đệ quy xây dựng cây
+            buildTree(data, depth) {
+                // Điều kiện dừng: đạt maxDepth hoặc dữ liệu đã đồng nhất (Gini = 0)
+                if (depth >= this.maxDepth || this.calculateGini(data) === 0 || data.length < 2) {
+                    let c0 = 0;
+                    for (let i = 0; i < data.length; i++) if (data[i].label === 0) c0++;
+                    const label = c0 >= (data.length / 2) ? 0 : 1;
+                    return new Node(null, null, null, null, label);
+                }
+
+                const split = this.findBestSplit(data);
+                
+                // Không tìm được split phù hợp
+                if (!split) {
+                    let c0 = 0;
+                    for (let i = 0; i < data.length; i++) if (data[i].label === 0) c0++;
+                    return new Node(null, null, null, null, c0 >= (data.length / 2) ? 0 : 1);
+                }
+
+                const leftNode = this.buildTree(split.left, depth + 1);
+                const rightNode = this.buildTree(split.right, depth + 1);
+
+                return new Node(split.feature, split.threshold, leftNode, rightNode, null);
+            }
+
+            fit(data) {
+                this.root = this.buildTree(data, 0);
+            }
+
+            // Dự đoán 1 điểm dữ liệu
+            predictSingle(node, point) {
+                if (node.label !== null) return node.label;
+                if (point[node.feature] <= node.threshold) {
+                    return this.predictSingle(node.left, point);
+                } else {
+                    return this.predictSingle(node.right, point);
+                }
+            }
+
+            predict(point) {
+                return this.predictSingle(this.root, point);
+            }
+        }
+
+        // --- 2. THUẬT TOÁN RANDOM FOREST ---
+        class RandomForest {
+            constructor(nTrees = 10, maxDepth = 5) {
+                this.nTrees = nTrees;
+                this.maxDepth = maxDepth;
+                this.trees = [];
+            }
+
+            // Tạo mẫu bootstrap (lấy ngẫu nhiên có hoàn lại)
+            bootstrap(data) {
+                const sample = [];
+                const n = data.length;
+                for (let i = 0; i < n; i++) {
+                    const randIndex = Math.floor(Math.random() * n);
+                    sample.push(data[randIndex]);
+                }
+                return sample;
+            }
+
+            fit(data) {
+                this.trees = [];
+                for (let i = 0; i < this.nTrees; i++) {
+                    const sample = this.bootstrap(data);
+                    const tree = new DecisionTree(this.maxDepth);
+                    tree.fit(sample);
+                    this.trees.push(tree);
+                }
+            }
+
+            predict(point) {
+                let votes0 = 0;
+                let votes1 = 0;
+                
+                for (let i = 0; i < this.trees.length; i++) {
+                    const pred = this.trees[i].predict(point);
+                    if (pred === 0) votes0++;
+                    else votes1++;
+                }
+                
+                // Lấy kết quả bầu chọn theo đa số
+                return votes0 > votes1 ? 0 : 1;
+            }
+        }
+
+        // --- 3. BIẾN TOÀN CỤC VÀ TƯƠNG TÁC GIAO DIỆN ---
+        const canvas = document.getElementById('vizCanvas');
+        const ctx = canvas.getContext('2d');
+        const width = canvas.width;
+        const height = canvas.height;
+
+        let dataset = [];
+        let currentMode = 'dt'; // 'dt' hoặc 'rf'
+        let currentModel = null;
+        let currentDataType = 'xor';
+        let trainingTimeout = null;
+
+        // Cập nhật text giá trị UI
+        function updateUI() {
+            document.getElementById('depthVal').innerText = document.getElementById('maxDepth').value;
+            document.getElementById('nTreesVal').innerText = document.getElementById('nTrees').value;
+            document.getElementById('rfDepthVal').innerText = document.getElementById('rfDepth').value;
+        }
+
+        function switchTab(mode) {
+            currentMode = mode;
+            if (mode === 'dt') {
+                document.getElementById('tab-dt').classList.add('border-blue-600', 'text-blue-600');
+                document.getElementById('tab-dt').classList.remove('border-transparent', 'text-slate-500');
+                document.getElementById('tab-rf').classList.remove('border-blue-600', 'text-blue-600');
+                document.getElementById('tab-rf').classList.add('border-transparent', 'text-slate-500');
+                
+                document.getElementById('panel-dt').classList.remove('hidden');
+                document.getElementById('panel-rf').classList.add('hidden');
+                document.getElementById('canvasTitle').innerText = "Ranh giới của Decision Tree";
+                document.getElementById('trainBtn').className = "w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded shadow transition flex justify-center items-center";
+            } else {
+                document.getElementById('tab-rf').classList.add('border-blue-600', 'text-blue-600');
+                document.getElementById('tab-rf').classList.remove('border-transparent', 'text-slate-500');
+                document.getElementById('tab-dt').classList.remove('border-blue-600', 'text-blue-600');
+                document.getElementById('tab-dt').classList.add('border-transparent', 'text-slate-500');
+                
+                document.getElementById('panel-rf').classList.remove('hidden');
+                document.getElementById('panel-dt').classList.add('hidden');
+                document.getElementById('canvasTitle').innerText = "Ranh giới của Random Forest";
+                document.getElementById('trainBtn').className = "w-full py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded shadow transition flex justify-center items-center";
+            }
+            trainModel();
+        }
+
+        // Sinh số ngẫu nhiên theo phân phối Gaussian xấp xỉ
+        function randn_bm() {
+            let u = 0, v = 0;
+            while(u === 0) u = Math.random();
+            while(v === 0) v = Math.random();
+            return Math.sqrt( -2.0 * Math.log( u ) ) * Math.cos( 2.0 * Math.PI * v );
+        }
+
+        // Sinh dữ liệu
+        function generateData(type) {
+            currentDataType = type;
+            dataset = [];
+            const N = 200; // Số lượng điểm
+            const noise = parseInt(document.getElementById('noiseLevel').value);
+
+            if (type === 'xor') {
+                for(let i=0; i<N; i++) {
+                    const isTop = Math.random() > 0.5;
+                    const isLeft = Math.random() > 0.5;
+                    const cx = isLeft ? 150 : 350;
+                    const cy = isTop ? 150 : 350;
+                    // Label 0 if top-left or bottom-right, else Label 1
+                    const label = (isTop === isLeft) ? 0 : 1; 
+                    
+                    dataset.push({
+                        x: cx + randn_bm() * noise,
+                        y: cy + randn_bm() * noise,
+                        label: label
+                    });
+                }
+            } else if (type === 'donut') {
+                for(let i=0; i<N; i++) {
+                    const label = Math.random() > 0.5 ? 0 : 1;
+                    const radius = label === 0 ? 50 + randn_bm()*(noise/3) : 180 + randn_bm()*(noise/2);
+                    const angle = Math.random() * Math.PI * 2;
+                    dataset.push({
+                        x: 250 + radius * Math.cos(angle),
+                        y: 250 + radius * Math.sin(angle),
+                        label: label
+                    });
+                }
+            } else if (type === 'moons') {
+                for(let i=0; i<N; i++) {
+                    const label = Math.random() > 0.5 ? 0 : 1;
+                    const angle = Math.random() * Math.PI;
+                    if(label === 0) {
+                        dataset.push({
+                            x: 250 + 100 * Math.cos(angle) - 50 + randn_bm()*(noise/2),
+                            y: 200 - 100 * Math.sin(angle) + randn_bm()*(noise/2),
+                            label: 0
+                        });
+                    } else {
+                        dataset.push({
+                            x: 250 + 100 * Math.cos(angle) + 50 + randn_bm()*(noise/2),
+                            y: 200 + 100 * Math.sin(angle) + 50 + randn_bm()*(noise/2),
+                            label: 1
+                        });
+                    }
+                }
+            } else { // random
+                for(let i=0; i<N; i++) {
+                    dataset.push({
+                        x: Math.random() * 400 + 50,
+                        y: Math.random() * 400 + 50,
+                        label: Math.random() > 0.5 ? 0 : 1
+                    });
+                }
+            }
+            
+            // Lọc dữ liệu nằm trong khung canvas
+            dataset = dataset.filter(d => d.x >= 0 && d.x <= 500 && d.y >= 0 && d.y <= 500);
+            
+            trainModel();
+        }
+
+        function forceRetrain() {
+            trainModel();
+        }
+
+        function trainModel() {
+            // Xóa bộ đếm cũ nếu người dùng kéo thanh trượt liên tục
+            if(trainingTimeout) clearTimeout(trainingTimeout);
+
+            // Hiện màn hình loading
+            document.getElementById('loading').classList.remove('hidden');
+
+            // Dùng setTimeout để trình duyệt có thời gian hiển thị màn hình loading trước khi bị khoá do JS chạy tính toán
+            trainingTimeout = setTimeout(() => {
+                const startTime = performance.now();
+                
+                if (currentMode === 'dt') {
+                    const depth = parseInt(document.getElementById('maxDepth').value);
+                    currentModel = new DecisionTree(depth);
+                    currentModel.fit(dataset);
+                } else {
+                    const nTrees = parseInt(document.getElementById('nTrees').value);
+                    const depth = parseInt(document.getElementById('rfDepth').value);
+                    currentModel = new RandomForest(nTrees, depth);
+                    currentModel.fit(dataset);
+                }
+
+                drawVisualization();
+                
+                const timeTaken = Math.round(performance.now() - startTime);
+                console.log(`Đã huấn luyện xong trong ${timeTaken}ms`);
+                
+                document.getElementById('loading').classList.add('hidden');
+            }, 50);
+        }
+
+        // Vẽ mọi thứ lên Canvas
+        function drawVisualization() {
+            // Xóa canvas
+            ctx.clearRect(0, 0, width, height);
+
+            // 1. Vẽ ranh giới phân loại (Decision Boundaries)
+            if (currentModel) {
+                // Để vẽ nhanh, chúng ta nhảy bước (step). 
+                // Step càng nhỏ vẽ càng mịn nhưng chậm. 4px là mức hợp lý.
+                const step = 4;
+                
+                // Mảng màu nền nhẹ
+                const color0 = 'rgba(252, 165, 165, 0.4)'; // Red-300 alpha
+                const color1 = 'rgba(147, 197, 253, 0.4)'; // Blue-300 alpha
+
+                for (let x = 0; x < width; x += step) {
+                    for (let y = 0; y < height; y += step) {
+                        const pred = currentModel.predict({x: x, y: y});
+                        ctx.fillStyle = pred === 0 ? color0 : color1;
+                        ctx.fillRect(x, y, step, step);
+                    }
+                }
+            }
+
+            // 2. Vẽ dữ liệu thật (các chấm)
+            dataset.forEach(pt => {
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 4, 0, 2 * Math.PI, false);
+                ctx.fillStyle = pt.label === 0 ? '#ef4444' : '#3b82f6'; // Màu đỏ đậm và xanh đậm
+                ctx.fill();
+                ctx.lineWidth = 1;
+                ctx.strokeStyle = '#1e293b'; // Viền tối để dễ nhìn
+                ctx.stroke();
+            });
+        }
+
+        // --- Khởi tạo ban đầu ---
+        generateData('xor');
+
+    </script>
+</body>
+</html>

@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mô phỏng Trích chọn đặc trưng Miền thời gian (Time-Domain)</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1e1e24;
+            color: #f5f5f7;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 { margin-bottom: 5px; color: #4dadff; }
+        p { margin-top: 0; color: #b0b0b5; }
+        .container {
+            display: flex;
+            flex-direction: column;
+            background: #2a2a35;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+            width: 800px;
+        }
+        canvas {
+            background-color: #121214;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            background: #343444;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            width: 45%;
+        }
+        label {
+            font-size: 14px;
+            margin-bottom: 5px;
+            color: #ffcc00;
+            display: flex;
+            justify-content: space-between;
+        }
+        input[type=range] {
+            width: 100%;
+            cursor: pointer;
+        }
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 10px;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        .stat-box {
+            padding: 8px 15px;
+            border-radius: 5px;
+            background: #121214;
+        }
+        .stat-mean { color: #00ffcc; border-left: 4px solid #00ffcc; }
+        .stat-std { color: #ff5577; border-left: 4px solid #ff5577; }
+    </style>
+</head>
+<body>
+
+    <h1>Time-Domain Feature Extraction Interactive</h1>
+    <p>Trực quan hóa cơ chế Cửa sổ trượt (Sliding Window) và Trích chọn đặc trưng Thống kê (Mean & Rolling Std)</p>
+
+    <div class="container">
+        <canvas id="timeDomainCanvas" width="800" height="420"></canvas>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label for="windowSize">Kích thước Cửa sổ (Window Size): <span id="windowSizeVal">30</span> mẫu</label>
+                <input type="range" id="windowSize" min="5" max="100" value="30">
+            </div>
+            <div class="control-group">
+                <label for="volatility">Mức độ biến động đột ngột: <span id="volatilityVal">Trung bình</span></label>
+                <input type="range" id="volatility" min="1" max="3" value="2">
+            </div>
+        </div>
+
+        <div class="stats">
+            <div class="stat-box stat-mean">Rolling Mean: <span id="meanVal">0.0</span></div>
+            <div class="stat-box stat-std">Rolling Std Dev: <span id="stdVal">0.0</span></div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('timeDomainCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Controls
+        const windowSizeSlider = document.getElementById('windowSize');
+        const windowSizeVal = document.getElementById('windowSizeVal');
+        const volatilitySlider = document.getElementById('volatility');
+        const volatilityVal = document.getElementById('volatilityVal');
+        const meanValSpan = document.getElementById('meanVal');
+        const stdValSpan = document.getElementById('stdVal');
+
+        // Data arrays
+        const maxPoints = 160;
+        let rawSignal = [];
+        let rollingMeanData = [];
+        let rollingStdData = [];
+        
+        // Initialize data with baseline heart rate (75)
+        for(let i=0; i<maxPoints; i++) {
+            rawSignal.push(75);
+            rollingMeanData.push(75);
+            rollingStdData.push(0);
+        }
+
+        let timeStep = 0;
+
+        function generateNextSignalPoint() {
+            timeStep++;
+            let base = 75 + Math.sin(timeStep * 0.05) * 5; // Chu kỳ nhịp sinh học cơ bản
+            
+            let noiseLevel = 1;
+            let volatility = parseInt(volatilitySlider.value);
+            
+            if (volatility === 1) {
+                noiseLevel = 1.5;
+                volatilityVal.innerText = "Thấp (Bình thường)";
+            } else if (volatility === 2) {
+                noiseLevel = 4;
+                // Lâu lâu tạo một cú nhấp nhô ngẫu nhiên
+                if(Math.random() > 0.93) base += (Math.random() - 0.5) * 25;
+                volatilityVal.innerText = "Trung bình (Có vận động)";
+            } else {
+                noiseLevel = 8;
+                // Tạo sốc liên tục (Mô phỏng té ngã hoặc hoảng loạn)
+                if(Math.random() > 0.7) base += (Math.random() - 0.5) * 55;
+                volatilityVal.innerText = "Cao (Té ngã / Biến cố)";
+            }
+            
+            let noise = (Math.random() - 0.5) * noiseLevel;
+            return base + noise;
+        }
+
+        function calculateTimeDomainFeatures() {
+            let winSize = parseInt(windowSizeSlider.value);
+            windowSizeVal.innerText = winSize;
+
+            // Loại bỏ điểm cũ nhất, đẩy điểm mới vào
+            rawSignal.shift();
+            rawSignal.push(generateNextSignalPoint());
+
+            // Lấy N mẫu cuối cùng thuộc cửa sổ hiện tại (Windowing)
+            let windowSegment = rawSignal.slice(-winSize);
+
+            // 1. Tính Mean (Giá trị trung bình)
+            let sum = windowSegment.reduce((a, b) => a + b, 0);
+            let mean = sum / winSize;
+
+            // 2. Tính Standard Deviation (Độ lệch chuẩn)
+            let variance = windowSegment.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / winSize;
+            let stdDev = Math.sqrt(variance);
+
+            // Lưu lịch sử để vẽ biểu đồ
+            rollingMeanData.shift();
+            rollingMeanData.push(mean);
+            
+            rollingStdData.shift();
+            rollingStdData.push(stdDev);
+
+            // Cập nhật text hiển thị UI
+            meanValSpan.innerText = mean.toFixed(2);
+            stdValSpan.innerText = stdDev.toFixed(2);
+        }
+
+        function drawGrid(x, y, w, h) {
+            ctx.strokeStyle = '#222228';
+            ctx.lineWidth = 1;
+            // Dòng dọc
+            for(let i = x; i <= x + w; i += 40) {
+                ctx.beginPath(); ctx.moveTo(i, y); ctx.lineTo(i, y + h); ctx.stroke();
+            }
+            // Dòng ngang
+            for(let j = y; j <= y + h; j += 30) {
+                ctx.beginPath(); ctx.moveTo(x, j); ctx.lineTo(x + w, j); ctx.stroke();
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            let winSize = parseInt(windowSizeSlider.value);
+            let padding = 40;
+            let graphW = canvas.width - padding * 2;
+            let graphH = 150;
+
+            // --- ĐỒ THỊ 1: RAW SIGNAL & SLIDING WINDOW ---
+            let g1Y = 40;
+            drawGrid(padding, g1Y, graphW, graphH);
+            
+            // Tiêu đề đồ thị 1
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '14px Arial';
+            ctx.fillText("Tín hiệu gốc thô (Raw Heart Rate Signal)", padding, g1Y - 10);
+
+            // Vẽ Vùng Cửa sổ trượt (Sliding Window Highlight)
+            let stepX = graphW / (maxPoints - 1);
+            let windowWidthPixels = winSize * stepX;
+            let windowLeftPixels = padding + graphW - windowWidthPixels;
+            
+            ctx.fillStyle = 'rgba(255, 204, 0, 0.15)';
+            ctx.fillRect(windowLeftPixels, g1Y, windowWidthPixels, graphH);
+            ctx.strokeStyle = '#ffcc00';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(windowLeftPixels, g1Y, windowWidthPixels, graphH);
+            
+            // Vẽ đường Raw Signal (Màu xanh dương)
+            ctx.beginPath();
+            ctx.strokeStyle = '#3498db';
+            ctx.lineWidth = 2;
+            for(let i=0; i<maxPoints; i++) {
+                let ptX = padding + i * stepX;
+                // Map nhịp tim từ khoảng [30, 150] vào chiều cao đồ thị
+                let ptY = g1Y + graphH - ((rawSignal[i] - 30) / (150 - 30)) * graphH;
+                if(i === 0) ctx.moveTo(ptX, ptY); else ctx.lineTo(ptX, ptY);
+            }
+            ctx.stroke();
+
+            // Vẽ đường Rolling Mean (Màu ngọc bích nét đứt chạy đè lên)
+            ctx.beginPath();
+            ctx.strokeStyle = '#00ffcc';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([4, 4]);
+            for(let i=0; i<maxPoints; i++) {
+                let ptX = padding + i * stepX;
+                let ptY = g1Y + graphH - ((rollingMeanData[i] - 30) / (150 - 30)) * graphH;
+                if(i === 0) ctx.moveTo(ptX, ptY); else ctx.lineTo(ptX, ptY);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]); // Reset nét đứt
+
+            // Thêm chữ chỉ hướng cửa sổ
+            ctx.fillStyle = '#ffcc00';
+            ctx.font = '11px Arial';
+            ctx.fillText("Cửa sổ trượt đang tính toán dữ liệu thực tế", windowLeftPixels + 5, g1Y + 20);
+
+
+            // --- ĐỒ THỊ 2: ROLLING STANDARD DEVIATION (TIME-DOMAIN FEATURE) ---
+            let g2Y = 240;
+            drawGrid(padding, g2Y, graphW, graphH);
+
+            // Tiêu đề đồ thị 2
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '14px Arial';
+            ctx.fillText("Đặc trưng Trích chọn: Độ lệch chuẩn trượt (Rolling Standard Deviation)", padding, g2Y - 10);
+
+            // Vẽ đường Rolling Std (Màu đỏ/hồng cánh sen)
+            ctx.beginPath();
+            ctx.strokeStyle = '#ff5577';
+            ctx.lineWidth = 2.5;
+            for(let i=0; i<maxPoints; i++) {
+                let ptX = padding + i * stepX;
+                // Map Std từ khoảng [0, 30] vào chiều cao đồ thị
+                let ptY = g2Y + graphH - (rollingStdData[i] / 30) * graphH;
+                if(i === 0) ctx.moveTo(ptX, ptY); else ctx.lineTo(ptX, ptY);
+            }
+            ctx.stroke();
+            
+            // Vẽ vùng bóng mờ dưới đường Std
+            ctx.lineTo(padding + graphW, g2Y + graphH);
+            ctx.lineTo(padding, g2Y + graphH);
+            ctx.fillStyle = 'rgba(255, 85, 119, 0.08)';
+            ctx.fill();
+        }
+
+        // Vòng lặp chạy mô phỏng liên tục
+        function updateLoop() {
+            calculateTimeDomainFeatures();
+            draw();
+            setTimeout(updateLoop, 60); // Cập nhật mượt mà khoảng 16 hình / giây
+        }
+
+        updateLoop();
+    </script>
+</body>
+</html>
