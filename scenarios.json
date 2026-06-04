@@ -1,0 +1,211 @@
+{
+  "version": "6v2",
+  "generated": "2026-06-05T05:02:08",
+  "time_step_s": 0.2,
+  "recommended_window_size": 50,
+  "recommended_stride": 25,
+  "window_coverage_s": 10.0,
+  "label_thresholds": {
+    "safe_to_warn": 1.2,
+    "warn_to_crit": 4.0,
+    "noise_zone": 0.3
+  },
+  "scenarios": {
+    "NORMAL_WALKING": {
+      "type": "simple",
+      "label_target": 0,
+      "description": "Đi bộ bình thường, exertion thấp, nhiệt độ ôn hòa."
+    },
+    "NORMAL_HEAVY_CLIMB": {
+      "type": "simple",
+      "label_target": 0,
+      "description": "Leo núi nặng, exertion cao nhưng môi trường an toàn."
+    },
+    "NORMAL_JUMPING": {
+      "type": "simple",
+      "label_target": 0,
+      "description": "Nhảy định kỳ, accel spike ngắn hạn, ổn định."
+    },
+    "WARN_INTERNAL_INJURY": {
+      "type": "simple",
+      "label_target": 1,
+      "description": "Chấn thương nội tạng tích lũy, trauma_shock tăng dần."
+    },
+    "WARN_SILENT_POISON": {
+      "type": "simple",
+      "label_target": 1,
+      "description": "Môi trường AQI cao và oxy thấp âm thầm."
+    },
+    "WARN_SLEEP_HYPOTHERMIA": {
+      "type": "simple",
+      "label_target": 1,
+      "description": "Ngủ trong môi trường lạnh, quần áo mỏng."
+    },
+    "WARN_DEHYDRATION": {
+      "type": "simple",
+      "label_target": 1,
+      "description": "Gắng sức trong nóng hanh, mất nước tích lũy nhanh."
+    },
+    "CRIT_SEVERE_FALL": {
+      "type": "simple",
+      "label_target": 2,
+      "description": "Ngã mạnh, trauma_shock leo thang nhanh."
+    },
+    "CRIT_HEATSTROKE": {
+      "type": "simple",
+      "label_target": 2,
+      "description": "Say nắng cấp tính: exertion + UV + nhiệt + mất nước."
+    },
+    "CRIT_TOXIC_COLLAPSE": {
+      "type": "simple",
+      "label_target": 2,
+      "description": "Ngộ độc khí: AQI cực cao, oxy giảm dần, shock."
+    },
+    "CRIT_DESERT_HEAT": {
+      "type": "simple",
+      "label_target": 2,
+      "description": "Sa mạc: cực nóng, UV cao, độ ẩm cực thấp, mất nước."
+    },
+    "CROSS_WALK_DEHYDRATION": {
+      "type": "composite",
+      "label_target": "0→1",
+      "scenario_a": "NORMAL_WALKING",
+      "scenario_b": "WARN_DEHYDRATION",
+      "description": "Đi bộ trong nóng, dần chuyển sang trạng thái mất nước."
+    },
+    "CROSS_CLIMB_INJURY": {
+      "type": "composite",
+      "label_target": "0→1",
+      "scenario_a": "NORMAL_HEAVY_CLIMB",
+      "scenario_b": "WARN_INTERNAL_INJURY",
+      "description": "Leo núi gắng sức rồi bị chấn thương."
+    },
+    "CROSS_HYPOTHERMIA_FALL": {
+      "type": "composite",
+      "label_target": "1→2",
+      "scenario_a": "WARN_SLEEP_HYPOTHERMIA",
+      "scenario_b": "CRIT_SEVERE_FALL",
+      "description": "Ngủ lạnh rồi ngã, suy sụp nhanh."
+    },
+    "CROSS_DESERT_HEATSTROKE": {
+      "type": "composite",
+      "label_target": "2→2",
+      "scenario_a": "CRIT_DESERT_HEAT",
+      "scenario_b": "CRIT_HEATSTROKE",
+      "description": "Sa mạc leo thang thành say nắng hoàn toàn."
+    },
+    "CROSS_WALK_TOXIC": {
+      "type": "composite",
+      "label_target": "0→2",
+      "scenario_a": "NORMAL_WALKING",
+      "scenario_b": "CRIT_TOXIC_COLLAPSE",
+      "description": "Đi bộ rồi tiến vào vùng khí độc, sụp đổ nhanh."
+    },
+    "CROSS_DEHYDRATION_HEATSTROKE": {
+      "type": "composite",
+      "label_target": "1→2",
+      "scenario_a": "WARN_DEHYDRATION",
+      "scenario_b": "CRIT_HEATSTROKE",
+      "description": "Mất nước leo thang thành say nắng nguy kịch."
+    }
+  },
+  "generation_summary": {
+    "NORMAL_WALKING": {
+      "num_events": 65,
+      "rows_per_event": 1000,
+      "total_rows": 65000
+    },
+    "NORMAL_HEAVY_CLIMB": {
+      "num_events": 20,
+      "rows_per_event": 1000,
+      "total_rows": 20000
+    },
+    "NORMAL_JUMPING": {
+      "num_events": 15,
+      "rows_per_event": 1000,
+      "total_rows": 15000
+    },
+    "WARN_INTERNAL_INJURY": {
+      "num_events": 20,
+      "rows_per_event": 500,
+      "total_rows": 10000
+    },
+    "WARN_SILENT_POISON": {
+      "num_events": 20,
+      "rows_per_event": 500,
+      "total_rows": 10000
+    },
+    "WARN_SLEEP_HYPOTHERMIA": {
+      "num_events": 20,
+      "rows_per_event": 500,
+      "total_rows": 10000
+    },
+    "WARN_DEHYDRATION": {
+      "num_events": 20,
+      "rows_per_event": 500,
+      "total_rows": 10000
+    },
+    "CRIT_SEVERE_FALL": {
+      "num_events": 10,
+      "rows_per_event": 1000,
+      "total_rows": 10000
+    },
+    "CRIT_HEATSTROKE": {
+      "num_events": 15,
+      "rows_per_event": 1500,
+      "total_rows": 22500
+    },
+    "CRIT_TOXIC_COLLAPSE": {
+      "num_events": 10,
+      "rows_per_event": 1000,
+      "total_rows": 10000
+    },
+    "CRIT_DESERT_HEAT": {
+      "num_events": 12,
+      "rows_per_event": 1500,
+      "total_rows": 18000
+    },
+    "CROSS_WALK_DEHYDRATION": {
+      "num_events": 12,
+      "rows_per_event": 750,
+      "total_rows": 9000,
+      "scenario_a": "NORMAL_WALKING",
+      "scenario_b": "WARN_DEHYDRATION"
+    },
+    "CROSS_CLIMB_INJURY": {
+      "num_events": 12,
+      "rows_per_event": 750,
+      "total_rows": 9000,
+      "scenario_a": "NORMAL_HEAVY_CLIMB",
+      "scenario_b": "WARN_INTERNAL_INJURY"
+    },
+    "CROSS_HYPOTHERMIA_FALL": {
+      "num_events": 12,
+      "rows_per_event": 750,
+      "total_rows": 9000,
+      "scenario_a": "WARN_SLEEP_HYPOTHERMIA",
+      "scenario_b": "CRIT_SEVERE_FALL"
+    },
+    "CROSS_DESERT_HEATSTROKE": {
+      "num_events": 10,
+      "rows_per_event": 750,
+      "total_rows": 7500,
+      "scenario_a": "CRIT_DESERT_HEAT",
+      "scenario_b": "CRIT_HEATSTROKE"
+    },
+    "CROSS_WALK_TOXIC": {
+      "num_events": 12,
+      "rows_per_event": 750,
+      "total_rows": 9000,
+      "scenario_a": "NORMAL_WALKING",
+      "scenario_b": "CRIT_TOXIC_COLLAPSE"
+    },
+    "CROSS_DEHYDRATION_HEATSTROKE": {
+      "num_events": 12,
+      "rows_per_event": 750,
+      "total_rows": 9000,
+      "scenario_a": "WARN_DEHYDRATION",
+      "scenario_b": "CRIT_HEATSTROKE"
+    }
+  }
+}
