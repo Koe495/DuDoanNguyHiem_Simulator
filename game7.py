@@ -1,17 +1,24 @@
-# game6.py
+# game7.py
 """
-Game Mô phỏng Dự đoán Nguy hiểm – v6
+Game Mô phỏng Dự đoán Nguy hiểm – v7
 ======================================
 Điều khiển:
   SPACE / P    : Tạm dừng / Tiếp tục
   ESC          : Về menu
-  Lướt chuột nhanh qua hình nhân : Gây ngã (nhanh = ngã mạnh)
+  Hold chuột trái trên hình nhân : Charge và gây ngã (giữ lâu = ngã mạnh hơn)
   Click thông số môi trường (khi dừng) : Chỉnh sửa
   Các nút dưới màn hình : Toggle trạng thái người chơi
 
+Thay đổi v7:
+  - UV tác động vào sinh lý: thân nhiệt, HRV (khớp genData8)
+  - Cơ chế gây ngã: hold chuột trái thay vì lướt nhanh
+  - Nút "Chua thuong": giảm 40% trauma, cooldown 8 giây
+  - Thanh trauma hiển thị trong panel sinh lý
+  - Thanh charge hiện khi đang hold chuột
+
 Yêu cầu:
-  pip install pygame numpy joblib scikit-learn
-  Cùng thư mục: rf_model_v8.pkl, feature_names_v8.json
+pip install pygame numpy joblib scikit-learn
+  Cùng thư mục: rf_model_v9.pkl, feature_names_v9.json
 """
 
 import sys
@@ -49,10 +56,13 @@ SAMPLE_EVERY = 6              # frames between samples (0.2 s)
 CRIT_DEATH   = FPS * 12       # frames at label-2 before death
 
 DT   = 1.0 / FPS              # seconds per frame
-# Scale factors mapping gendata5 per-5s coefficients to per-frame
-HR_K   = 1.0 - (0.88 ** (DT / 5.0))   # ≈ 0.000856
-HRV_K  = 1.0 - (0.92 ** (DT / 5.0))   # ≈ 0.000556
-TEMP_K = DT / 5.0                       # 0.00667
+# Convergence rates per frame — calibrated to match genData8.py
+# genData8: SCALE=0.04, TIME_STEP_S=0.2s → rate_per_step = coeff * SCALE
+# game: rate_per_frame = rate_per_step / 0.2 * DT
+HR_RATE          = 0.12 * 0.04 * DT / 0.2   # ≈ 0.000800 /frame (khớp genData8)
+HRV_RATE         = 0.08 * 0.04 * DT / 0.2   # ≈ 0.000533 /frame (khớp genData8)
+TEMP_K           = DT / 5.0                   # 0.00667
+TRAUMA_FALL_RATE = 0.20 * 0.04 * DT / 0.2   # ≈ 0.001333 /frame (khớp CRIT_SEVERE_FALL)
 
 SENSOR_COLS = [
     "hr", "hrv", "body_temp", "env_temp", "humidity",
@@ -181,23 +191,18 @@ def wrap_lines(text: str, font: pygame.font.Font, max_w: int) -> list:
 
 
 def get_suggestion(label: int, hr: float, hrv: float, body_temp: float,
-                   oxygen: float, aqi: float, trauma: float,
-                   dehydration: float = 0.0) -> str:
+                   oxygen: float, aqi: float, trauma: float) -> str:
     if label == 0:
-        if dehydration > 0.3:
-            return "Bat dau mat nuoc - Hay uong nuoc som."
         return "Tat ca chi so on dinh. Tiep tuc hanh trinh an toan."
     if label == 1:
         if body_temp < 35.5:
             return "Than nhiet giam - Mac them quan ao am ngay!"
         if body_temp > 38.5:
-            return "Than nhiet tang - Nghi ngoi, tim bong mat, uong nuoc."
+            return "Than nhiet tang - Nghi ngoi, tim bong mat."
         if oxygen < 18.0:
             return "Oxy thap - Deo mat na duong khi."
         if aqi > 150:
             return "Khong khi o nhiem - Deo mat na bao ho."
-        if dehydration > 0.5:
-            return "Mat nuoc nghiem trong - Uong nuoc ngay, nghi ngoi!"
         if hr > 140:
             return "Nhip tim cao - Giam cuong do van dong, nghi ngoi."
         if hrv < 25:
@@ -214,8 +219,6 @@ def get_suggestion(label: int, hr: float, hrv: float, body_temp: float,
         return "THIEU OXY NGUY KICH! Deo mat na ngay, roi khoi khu vuc!"
     if aqi > 350:
         return "NGO DOC KHI! Deo mat na va thoat khoi day ngay!"
-    if dehydration > 0.8:
-        return "KIET NUOC NGUY KICH! Uong nuoc va cap cuu ngay!"
     if trauma > 0.6:
         return "CHAN THUONG NANG! Khong di chuyen, goi cuu ho ngay!"
     if hr > 175 or hr < 42:
@@ -249,10 +252,9 @@ class PhysioSim:
         self.terrain    = "Ly tuong"
 
         # Player state
-        self.clothing    = 0.5   # 0=naked, 1=full winter gear
+        self.clothing    = 0.5
         self.trauma      = 0.0
-        self.dehydration = 0.0   # 0=hydrated, 1=severely dehydrated
-        self.mask        = False  # oxygen mask
+        self.mask        = False
         self.sleeping    = False
         self.exercising  = False
         self.fallen      = False
@@ -266,6 +268,7 @@ class PhysioSim:
         self.label       = 0
         self.confidence  = 1.0
         self.crit_frames = 0
+        self.first_aid_cooldown = 0   # frames remaining on heal cooldown
 
     # ── public controls ─────────────────────────────────────────
 
@@ -299,9 +302,14 @@ class PhysioSim:
         self.fall_timer = 0.0
         self.fall_dur   = 0.0
 
-    def drink(self) -> None:
-        """Giảm dehydration khi uống nước (~0.15 mỗi lần)."""
-        self.dehydration = max(0.0, self.dehydration - 0.15)
+    def heal(self) -> bool:
+        """Chữa thương: giảm trauma 0.4, cooldown 8s.
+        Trả về True nếu thành công."""
+        if self.trauma > 0.0 and self.first_aid_cooldown <= 0:
+            self.trauma = max(0.0, self.trauma - 0.40)
+            self.first_aid_cooldown = FPS * 8   # 8 giây
+            return True
+        return False
 
     # ── per-frame update ────────────────────────────────────────
 
@@ -337,12 +345,12 @@ class PhysioSim:
         # Fall management
         if self.fallen:
             self.fall_timer += DT
-            self.fall_dur    = self.fall_timer
-            if self.fall_timer > 8.0:   # auto-recover after 8 s
+            self.fall_dur    = min(self.fall_timer, 30.0)   # cap tại 30s khớp training
+            if self.fall_timer > 60.0:   # auto-recover sau 60s nếu không bấm đứng dậy
                 self.fallen     = False
                 self.fall_timer = 0.0
                 self.fall_dur   = 0.0
-            self.trauma = min(1.0, self.trauma + 0.015 * TEMP_K * 150)
+            self.trauma = min(1.0, self.trauma + TRAUMA_FALL_RATE)
         else:
             self.fall_dur = 0.0
             self.trauma   = max(0.0, self.trauma - 0.0008)
@@ -354,26 +362,25 @@ class PhysioSim:
         else:
             self.accel_mag += (0.1 - self.accel_mag) * 0.04  # near-zero in freefall
 
-        # Dehydration: accumulates with exertion + heat; reduced by drinking
-        dehy_rate = (0.0003
-                     + max(0.0, exertion) * 0.0004
-                     + max(0.0, self.env_temp - 28.0) * 0.00005)
-        self.dehydration = float(np.clip(self.dehydration + dehy_rate, 0.0, 1.0))
+        # UV effective: clothing blocks 60%, sleeping/fallen reduce exposure 70%
+        uv_exposed = self.uv_index * (1.0 - self.clothing * 0.6)
+        if self.sleeping or self.fallen:
+            uv_exposed *= 0.3
+        uv_excess = max(0.0, uv_exposed - 3.0)   # UV > 3 mới gây hại sinh lý
 
         # A. Body temperature  (heat_prod – heat_xfer scaled to per-frame)
-        hp = 0.012 * (1.0 + exertion) * TEMP_K
-        hl = 0.004 * (self.env_temp - self.body_temp) * (1.0 - self.clothing) * TEMP_K
-        dh = self.dehydration * 0.005 * TEMP_K
-        self.body_temp += hp + hl + dh + random.gauss(0, 0.006)
+        hp      = 0.012 * (1.0 + exertion) * TEMP_K
+        hl      = 0.004 * (self.env_temp - self.body_temp) * (1.0 - self.clothing) * TEMP_K
+        uv_heat = uv_excess * 0.00018 * TEMP_K   # UV > 3: ~+0.0012°C/frame @ UV=10
+        self.body_temp += hp + hl + uv_heat + random.gauss(0, 0.006)
         self.body_temp  = float(np.clip(self.body_temp, 30.0, 43.0))
 
         # B. Heart rate
         hyp  = max(0.0, 20.9 - eff_o2) * 4.5
         tox  = max(0.0, eff_aqi - 100.0) * 0.04
         shk  = self.trauma * 40.0 if exertion >= 0 else -self.trauma * 25.0
-        dhy  = self.dehydration * 20.0
-        t_hr = self.base_hr + exertion * 65.0 + hyp + tox + shk + dhy
-        self.hr += (t_hr - self.hr) * HR_K * 150 + random.gauss(0, 0.4)
+        t_hr = self.base_hr + exertion * 65.0 + hyp + tox + shk
+        self.hr += (t_hr - self.hr) * HR_RATE + random.gauss(0, 0.4)
         self.hr  = float(np.clip(self.hr, 32.0, 198.0))
 
         # C. HRV
@@ -381,10 +388,14 @@ class PhysioSim:
         hy_s  = max(0.0, 20.9 - eff_o2) * 10.0
         tx_s  = max(0.0, eff_aqi - 50.0) * 0.12
         inj_s = self.trauma * 45.0
-        dhy_s = self.dehydration * 15.0
-        t_hrv = self.base_hrv - exertion * 20.0 - th_s - hy_s - tx_s - inj_s - dhy_s
-        self.hrv += (t_hrv - self.hrv) * HRV_K * 150 + random.gauss(0, 0.3)
+        uv_s  = uv_excess * 1.2
+        t_hrv = self.base_hrv - exertion * 20.0 - th_s - hy_s - tx_s - inj_s - uv_s
+        self.hrv += (t_hrv - self.hrv) * HRV_RATE + random.gauss(0, 0.3)
         self.hrv  = float(np.clip(self.hrv, 4.0, 100.0))
+
+        # Tick cooldowns
+        if self.first_aid_cooldown > 0:
+            self.first_aid_cooldown -= 1
 
         # Sample for ML buffer
         self.sample_cnt += 1
@@ -413,7 +424,7 @@ class PhysioSim:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class MLPredictor:
-    """Loads rf_model_v8.pkl and predicts risk label from WIN_SZ×0.2s rolling window."""
+    """Loads rf_model_v9.pkl and predicts risk label from WIN_SZ×0.2s rolling window."""
 
     def __init__(self) -> None:
         self.model = None
@@ -424,7 +435,8 @@ class MLPredictor:
         if not _HAS_JOBLIB:
             return
         try:
-            self.model = joblib.load("rf_model_v8.pkl")
+            # Sửa đổi quan trọng nhất ở đây: chuyển từ v8 sang v9
+            self.model = joblib.load("rf_model_v9.pkl")
             self.ok = True
             print("[MLPredictor] Model loaded OK.")
         except FileNotFoundError as e:
@@ -469,8 +481,6 @@ class MLPredictor:
         fd_m  = float(np.mean(arr[:, 10]))
 
         dev = 0.0
-
-        # Môi trường / tuyệt đối
         dev += (abs(bt_m - 36.8) / 1.3) ** 2
         dev += (max(0.0, 20.9 - oxy_m) / 2.0) ** 2
         dev += (max(0.0, aqi_m - 120.0) / 100.0) ** 2
@@ -480,12 +490,9 @@ class MLPredictor:
                    + max(0.0, env_m - 32.0) / 12.0)
         dev += uv_heat * (1.0 + max(0.0, bt_m - 37.0) / 2.0)
 
-        # HRV cá nhân hoá: cảnh báo khi < 65% baseline
         hrv_thresh = base_hrv * 0.65
         hrv_norm   = max(base_hrv * 0.25, 4.0)
         dev += (max(0.0, hrv_thresh - hrv_m) / hrv_norm) ** 2
-
-        # HR cá nhân hoá: cảnh báo khi tăng > 55 BPM so với baseline
         dev += (max(0.0, hr_m - (base_hr + 55.0)) / 25.0) ** 2
 
         if dev >= 4.0:
@@ -868,7 +875,7 @@ class GameScreen:
             Button((3*bw+4,  by, bw-8, bh), "Ngu",           self.f16, toggle=True),
             Button((4*bw+4,  by, bw-8, bh), "Van dong manh", self.f16, toggle=True),
             Button((5*bw+4,  by, bw-8, bh), "Dung day",      self.f16, toggle=False),
-            Button((6*bw+4,  by, bw-8, bh), "Uong nuoc",     self.f16, toggle=False),
+            Button((6*bw+4,  by, bw-8, bh), "Chua thuong",   self.f16, toggle=False),
         ]
         # Sync toggles
         self.act_btns[2].active = self.sim.mask
@@ -881,9 +888,10 @@ class GameScreen:
         self.editing_param: str   = ""
         self.text_input: TextInput | None = None
 
-        # Mouse knock tracking
-        self.prev_mouse: tuple = pygame.mouse.get_pos()
-        self.char_rect  = pygame.Rect(self.CHAR_CX - 40, self.CHAR_CY - 90, 80, 100)
+        # Mouse knock tracking (hold mechanic)
+        self.knock_holding    = False
+        self.knock_hold_frames = 0
+        self.char_rect = pygame.Rect(self.CHAR_CX - 40, self.CHAR_CY - 90, 80, 100)
 
         # Background scroll (parallax)
         self.scroll_x = 0.0
@@ -945,21 +953,27 @@ class GameScreen:
                         self.text_input = TextInput(ir, self.f16, str(round(cur, 1)))
                         break
 
-            # Mouse knock
-            if e.type == pygame.MOUSEMOTION and not self.paused and not self.dead:
-                cur = e.pos
-                dx  = cur[0] - self.prev_mouse[0]
-                dy  = cur[1] - self.prev_mouse[1]
-                vel = math.sqrt(dx*dx + dy*dy)
-                if vel > 6 and self.char_rect.collidepoint(cur):
-                    intensity = min(1.0, (vel - 6) / 30.0)
-                    self.sim.do_knock(intensity)
-                self.prev_mouse = cur
+            # Mouse knock: hold left button over character to charge, release to strike
+            if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+                if self.char_rect.collidepoint(e.pos) and not self.paused and not self.dead:
+                    self.knock_holding = True
+                    self.knock_hold_frames = 0
+            if e.type == pygame.MOUSEBUTTONUP and e.button == 1:
+                if self.knock_holding:
+                    self.knock_holding = False
+                    if self.knock_hold_frames >= 10:   # minimum 10 frames (~0.33s)
+                        intensity = min(1.0, self.knock_hold_frames / (FPS * 2.0))
+                        self.sim.do_knock(intensity)
+                    self.knock_hold_frames = 0
 
         if self.paused or self.dead:
             if self.dead:
                 self.dead_timer += 1
             return ""
+
+        # Charge knock hold timer
+        if self.knock_holding:
+            self.knock_hold_frames += 1
 
         # Physics update
         self.sim.update()
@@ -976,8 +990,31 @@ class GameScreen:
             self.suggestion     = get_suggestion(
                 lbl, self.sim.hr, self.sim.hrv, self.sim.body_temp,
                 self.sim.oxygen, self.sim.aqi, self.sim.trauma,
-                self.sim.dehydration,
             )
+
+        # ── Physiological safety override ────────────────────────────────
+        # Cảnh báo dựa trực tiếp trên thân nhiệt (và các chỉ số sinh lý tức thì).
+        # ML window 10s lag sau khi body_temp đã vượt ngưỡng nguy hiểm;
+        # override này kích hoạt ngay lập tức. Chỉ NÂNG nhãn, không hạ.
+        bt      = self.sim.body_temp
+        eff_oxy = min(20.9, self.sim.oxygen + (3.8 if self.sim.mask else 0.0))
+        eff_aqi = self.sim.aqi * (0.15 if self.sim.mask else 1.0)
+        if (bt < 34.0 or bt > 40.5
+                or eff_oxy < 15.0 or eff_aqi > 350 or self.sim.trauma > 0.6):
+            if self.sim.label < 2:
+                self.sim.label      = 2
+                self.sim.confidence = max(self.sim.confidence, 0.88)
+                self.suggestion     = get_suggestion(
+                    2, self.sim.hr, self.sim.hrv, bt,
+                    self.sim.oxygen, self.sim.aqi, self.sim.trauma)
+        elif (bt < 35.5 or bt > 38.5
+                or eff_oxy < 17.5 or eff_aqi > 150 or self.sim.trauma > 0.2):
+            if self.sim.label < 1:
+                self.sim.label      = 1
+                self.sim.confidence = max(self.sim.confidence, 0.75)
+                self.suggestion     = get_suggestion(
+                    1, self.sim.hr, self.sim.hrv, bt,
+                    self.sim.oxygen, self.sim.aqi, self.sim.trauma)
 
         # Critical death timer
         if self.sim.label == 2:
@@ -1021,7 +1058,7 @@ class GameScreen:
             self.act_btns[3].active = False
             self.sim.sleeping = False
         elif idx == 6:
-            self.sim.drink()
+            self.sim.heal()
 
     def _apply_edit(self) -> None:
         if not self.editing_param or self.text_input is None:
@@ -1073,6 +1110,7 @@ class GameScreen:
         self._draw_terrain()
         self._draw_particles()
         self.char.draw(self.surf, self.sim, self.dead, self.sim.label)
+        self._draw_knock_charge()
         self._draw_topbar()
         self._draw_stats()
         self._draw_botbar()
@@ -1082,6 +1120,30 @@ class GameScreen:
             self._draw_death_overlay()
         if self.text_input:
             self.text_input.draw(self.surf)
+
+    def _draw_knock_charge(self) -> None:
+        """Hiển thị thanh charge khi người chơi đang hold chuột lên hình nhân."""
+        if not self.knock_holding or self.knock_hold_frames < 5:
+            return
+        charge = min(1.0, self.knock_hold_frames / (FPS * 2.0))
+        cx = self.CHAR_CX
+        cy = self.CHAR_CY - 110
+        bar_w = 60
+        bar_h = 8
+        bx = cx - bar_w // 2
+        # Background
+        pygame.draw.rect(self.surf, (60, 20, 20), (bx, cy, bar_w, bar_h), border_radius=4)
+        # Fill: green→yellow→red theo charge
+        if charge < 0.5:
+            col = lerp_col((55, 195, 75), (225, 175, 25), charge * 2)
+        else:
+            col = lerp_col((225, 175, 25), (215, 55, 55), (charge - 0.5) * 2)
+        fill_w = int(bar_w * charge)
+        if fill_w > 0:
+            pygame.draw.rect(self.surf, col, (bx, cy, fill_w, bar_h), border_radius=4)
+        # Label
+        lbl = self.f13.render("CHUAN BI TE NGA...", True, col)
+        self.surf.blit(lbl, lbl.get_rect(centerx=cx, y=cy - 16))
 
     def _draw_terrain(self) -> None:
         key = self.sim.terrain
@@ -1142,7 +1204,7 @@ class GameScreen:
         pad = 6
 
         # ── Physiological panel ──────────────────────────────────
-        ph = 176
+        ph = 210
         draw_panel(self.surf, (sx+pad, sy+pad, sw-pad*2, ph),
                    PHY_BG, PHY_BD, "CHI SO SINH LY", self.f16, bdr_w=2)
         self._stat_row(sx+pad+8, sy+34, "Nhip tim (HR)",  f"{s.hr:.1f} BPM",
@@ -1161,19 +1223,30 @@ class GameScreen:
         draw_rrect(self.surf, (80, 150, 230),
                    (bar_r.x, bar_r.y, int(bar_r.w * s.clothing), bar_r.h))
 
-        # Dehydration bar
-        dh_y = sy + 148
-        dh_col = (
-            RED    if s.dehydration > 0.7 else
-            YELLOW if s.dehydration > 0.4 else
+        # Trauma bar
+        tr_y = sy + 148
+        tr_col = (
+            RED    if s.trauma > 0.6 else
+            ORANGE if s.trauma > 0.3 else
+            YELLOW if s.trauma > 0.1 else
             GREEN
         )
-        self.surf.blit(self.f14.render(f"Mat nuoc: {s.dehydration*100:.0f}%", True, DIM),
-                       (sx+pad+8, dh_y))
-        bar_d = pygame.Rect(sx+pad+120, dh_y+3, 200, 9)
-        draw_rrect(self.surf, (40, 50, 80), bar_d)
-        draw_rrect(self.surf, dh_col,
-                   (bar_d.x, bar_d.y, int(bar_d.w * s.dehydration), bar_d.h))
+        self.surf.blit(self.f14.render(f"Chan thuong: {s.trauma*100:.0f}%", True, DIM),
+                       (sx+pad+8, tr_y))
+        bar_t = pygame.Rect(sx+pad+120, tr_y+3, 200, 9)
+        draw_rrect(self.surf, (40, 50, 80), bar_t)
+        draw_rrect(self.surf, tr_col,
+                   (bar_t.x, bar_t.y, int(bar_t.w * s.trauma), bar_t.h))
+
+        # Heal cooldown hint
+        if s.first_aid_cooldown > 0:
+            cd_pct = s.first_aid_cooldown / (FPS * 8)
+            bar_cd = pygame.Rect(sx+pad+120, tr_y+14, 200, 5)
+            draw_rrect(self.surf, (60, 20, 20), bar_cd)
+            draw_rrect(self.surf, (200, 80, 80),
+                       (bar_cd.x, bar_cd.y, int(bar_cd.w * cd_pct), bar_cd.h))
+            cd_s = self.f13.render(f"Chua thuong: hoi phuc {s.first_aid_cooldown//FPS+1}s", True, (180, 60, 60))
+            self.surf.blit(cd_s, (sx+pad+8, tr_y+14))
 
         # ── Environment panel ────────────────────────────────────
         ey  = sy + ph + pad * 2
@@ -1299,10 +1372,14 @@ class GameScreen:
         self.act_btns[2].active = self.sim.mask
         self.act_btns[3].active = self.sim.sleeping
         self.act_btns[4].active = self.sim.exercising
-        # Tint "Uong nuoc" button theo mức dehydration
-        self.act_btns[6].label = (
-            "Uong nuoc (!)" if self.sim.dehydration > 0.5 else "Uong nuoc"
-        )
+        # Tint "Chua thuong" theo cooldown và trauma
+        cd = self.sim.first_aid_cooldown
+        if cd > 0:
+            self.act_btns[6].label = f"Chua thuong ({cd//FPS+1}s)"
+        elif self.sim.trauma > 0.1:
+            self.act_btns[6].label = "Chua thuong (!)"
+        else:
+            self.act_btns[6].label = "Chua thuong"
 
         for btn in self.act_btns:
             btn.draw(self.surf)

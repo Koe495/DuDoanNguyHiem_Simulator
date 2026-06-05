@@ -1,6 +1,6 @@
 {
-  "version": "6v2",
-  "generated": "2026-06-05T05:02:08",
+  "version": "v8",
+  "generated": "2026-06-05T12:55:35",
   "time_step_s": 0.2,
   "recommended_window_size": 50,
   "recommended_stride": 25,
